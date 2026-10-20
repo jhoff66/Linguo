@@ -119,8 +119,8 @@ final class Translator {
     }
 
     /// Reescreve o texto com uma das ações do ⌥3 (corrigir, humanizar, marketing…).
-    func rewrite(_ text: String, _ action: TextAction) async throws -> String {
-        try await run(text, system: action.systemPrompt, tag: "rw-\(action.rawValue)", onPartial: nil)
+    func rewrite(_ text: String, _ action: TextAction, onPartial: ((String) -> Void)? = nil) async throws -> String {
+        try await run(text, system: action.systemPrompt, tag: "rw-\(action.rawValue)", onPartial: onPartial)
     }
 
     /// Chamada genérica: `tag` separa o cache e o `prompt_cache_key` de cada tipo de pedido.
@@ -170,7 +170,7 @@ final class Translator {
         let c = URLSessionConfiguration.ephemeral
         c.waitsForConnectivity = true
         c.timeoutIntervalForRequest = 30
-        c.httpMaximumConnectionsPerHost = 2
+        c.httpMaximumConnectionsPerHost = 8  // a barra do ⌥3 pede todas as versões de uma vez
         return URLSession(configuration: c)
     }()
 

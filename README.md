@@ -9,9 +9,10 @@ Tradutor de barra de menu para macOS, feito para conversar no WhatsApp (ou em qu
 - **⌃3 (Control + 3)** no campo de mensagem: troca o que você escreveu pela tradução, ali mesmo. Depois é só dar Enter.
 - **⌘3 (Command + 3)** abre o tradutor flutuante. Escreva em português e a tradução aparece ao vivo. Cole a mensagem da outra pessoa e ela vira português.
   - ↩ cola a tradução no app de onde você veio, ⌘↩ só copia, ⇧↩ nova linha, esc fecha.
-- **⌥3 (Option + 3)** no campo de mensagem: abre uma janelinha com ações para o texto. Escolha pelo número, pelas setas + ↩ ou com clique:
-  1. Traduzir · 2. Corrigir ortografia · 3. Melhorar texto · 4. Humanizar · 5. Marketing · 6. Profissional · 7. Mais simpático · 8. Encurtar
-  O texto do campo é trocado pelo resultado, no mesmo idioma (menos em Traduzir).
+- **⌥3 (Option + 3)** no campo de mensagem: abre uma barra logo acima do campo, já com o resultado da última opção que você usou. As versões são geradas todas de uma vez, então trocar é instantâneo:
+  - **← →** (ou o número) troca entre Corrigir, Melhorar, Humanizar, Marketing e Traduzir.
+  - **↓** mostra mais: Profissional, Simpático e Encurtar.
+  - **↩** troca o texto do campo pela versão que está na tela. **esc** cancela sem mexer em nada.
 - O idioma de destino fica no menu do ícone ou no próprio tradutor: espanhol (Espanha ou América Latina), inglês, francês, italiano e alemão.
 
 ## Sua chave da OpenAI

@@ -5,7 +5,7 @@ import ServiceManagement
 final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
     private let panel = TranslatorPanel()
-    private let picker = ActionPicker()
+    private let bar = RewriteBar()
     private var busy = false { didSet { refreshIcon() } }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -54,7 +54,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     /// Roda o pedido e troca o texto do campo pelo resultado.
     @MainActor
     private func replaceField(_ snapshot: ClipboardSnapshot, reselect: Bool,
-                              _ work: () async throws -> String) async {
+                              _ work: @escaping () async throws -> String) async {
         busy = true
         defer { busy = false }
         do {
@@ -85,28 +85,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     private func showActions() {
-        guard !busy, !picker.isVisible else { return }
+        guard !busy, !bar.isVisible else { return }
         let front = NSWorkspace.shared.frontmostApplication
         let lang = language
+        // Pega a posição do campo antes de o Linguo vir pra frente.
+        let anchor = focusedFieldFrame()
         Task { @MainActor in
             guard let (text, snapshot) = await captureField() else { return }
-            picker.onCancel = {
+            bar.onCancel = {
                 snapshot.restore()
                 front?.activate()
             }
-            picker.onPick = { [weak self] action in
+            bar.onApply = { [weak self] result in
                 front?.activate()
                 Task { @MainActor in
                     // Espera o app voltar pra frente antes de colar.
                     try? await Task.sleep(nanoseconds: 250_000_000)
-                    await self?.replaceField(snapshot, reselect: true) {
-                        action == .translate
-                            ? try await Translator.shared.translate(text, to: lang, direction: .outgoing)
-                            : try await Translator.shared.rewrite(text, action)
-                    }
+                    await self?.replaceField(snapshot, reselect: true) { result }
                 }
             }
-            picker.present(text: text, translateTo: lang)
+            bar.present(text: text, language: lang, anchor: anchor)
         }
     }
 
