@@ -25,11 +25,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var language: Language { panel.language }
 
     private func refreshIcon() {
-        guard let button = item.button else { return }
-        let symbol = busy ? "ellipsis.bubble.fill" : "character.bubble"
-        button.image = NSImage(systemSymbolName: symbol, accessibilityDescription: "Linguo")
-        button.imagePosition = .imageLeading
-        button.title = " " + language.code.prefix(2).uppercased()
+        item.button?.image = MenuIcon.make(code: language.code, busy: busy)
+        item.button?.title = ""
     }
 
     // MARK: Tradução no lugar (⌃3)
