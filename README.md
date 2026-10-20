@@ -1,3 +1,5 @@
+<img src="Resources/icon.png" width="128" alt="">
+
 # Linguo
 
 Tradutor de barra de menu para macOS, feito para conversar no WhatsApp (ou em qualquer app) com quem fala outra língua. Você escreve em português e manda no idioma da pessoa.
