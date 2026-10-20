@@ -78,18 +78,22 @@ final class Translator {
         }
     }
 
-    private func cacheKey(_ text: String, _ lang: Language, _ dir: Direction) -> String {
-        "\(lang.code)|\(dir == .outgoing ? "out" : "auto")|\(text)"
+    private func tag(_ lang: Language, _ dir: Direction) -> String {
+        "\(lang.code)|\(dir == .outgoing ? "out" : "auto")"
     }
 
     func cached(_ text: String, _ lang: Language, _ dir: Direction) -> String? {
-        lock.lock(); defer { lock.unlock() }
-        return cache[cacheKey(text, lang, dir)]
+        cached(text, tag: tag(lang, dir))
     }
 
-    private func store(_ text: String, _ lang: Language, _ dir: Direction, _ result: String) {
+    private func cached(_ text: String, tag: String) -> String? {
+        lock.lock(); defer { lock.unlock() }
+        return cache["\(tag)|\(text)"]
+    }
+
+    private func store(_ text: String, tag: String, _ result: String) {
         lock.lock()
-        let key = cacheKey(text, lang, dir)
+        let key = "\(tag)|\(text)"
         if cache[key] == nil { order.append(key) }
         cache[key] = result
         while order.count > cacheLimit { cache.removeValue(forKey: order.removeFirst()) }
@@ -111,9 +115,20 @@ final class Translator {
     /// Traduz com streaming; `onPartial` recebe o texto acumulado a cada pedaço.
     func translate(_ text: String, to lang: Language, direction: Direction,
                    onPartial: ((String) -> Void)? = nil) async throws -> String {
+        try await run(text, system: systemPrompt(lang, direction), tag: tag(lang, direction), onPartial: onPartial)
+    }
+
+    /// Reescreve o texto com uma das ações do ⌥3 (corrigir, humanizar, marketing…).
+    func rewrite(_ text: String, _ action: TextAction) async throws -> String {
+        try await run(text, system: action.systemPrompt, tag: "rw-\(action.rawValue)", onPartial: nil)
+    }
+
+    /// Chamada genérica: `tag` separa o cache e o `prompt_cache_key` de cada tipo de pedido.
+    private func run(_ text: String, system: String, tag: String,
+                     onPartial: ((String) -> Void)?) async throws -> String {
         let text = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { return "" }
-        if let hit = cached(text, lang, direction) { return hit }
+        if let hit = cached(text, tag: tag) { return hit }
         guard let key = KeyStore.apiKey, !key.isEmpty else { throw TranslatorError.noKey }
 
         var req = URLRequest(url: URL(string: "https://api.openai.com/v1/chat/completions")!)
@@ -125,9 +140,9 @@ final class Translator {
             "model": Self.model,
             "reasoning_effort": "none",
             "stream": true,
-            "prompt_cache_key": "linguo-\(lang.code)-\(direction == .outgoing ? "out" : "auto")",
+            "prompt_cache_key": "linguo-\(tag.replacingOccurrences(of: "|", with: "-"))",
             "messages": [
-                ["role": "system", "content": systemPrompt(lang, direction)],
+                ["role": "system", "content": system],
                 ["role": "user", "content": text],
             ],
         ]
@@ -138,7 +153,7 @@ final class Translator {
         while true {
             attempt += 1
             do {
-                return try await stream(req, text, lang, direction, onPartial)
+                return try await stream(req, text, tag, onPartial)
             } catch let e as URLError where e.code != .cancelled && attempt < 3 {
                 Log.write("tentativa \(attempt) falhou: \(e.code.rawValue) \(e.localizedDescription)")
                 try await Task.sleep(nanoseconds: 400_000_000)
@@ -159,7 +174,7 @@ final class Translator {
         return URLSession(configuration: c)
     }()
 
-    private func stream(_ req: URLRequest, _ text: String, _ lang: Language, _ direction: Direction,
+    private func stream(_ req: URLRequest, _ text: String, _ tag: String,
                         _ onPartial: ((String) -> Void)?) async throws -> String {
         let (bytes, response) = try await session.bytes(for: req)
         if let http = response as? HTTPURLResponse, http.statusCode != 200 {
@@ -183,7 +198,7 @@ final class Translator {
             onPartial?(out)
         }
         out = out.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !out.isEmpty { store(text, lang, direction, out) }
+        if !out.isEmpty { store(text, tag: tag, out) }
         return out
     }
 }

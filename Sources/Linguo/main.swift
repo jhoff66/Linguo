@@ -5,6 +5,7 @@ import ServiceManagement
 final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
     private let panel = TranslatorPanel()
+    private let picker = ActionPicker()
     private var busy = false { didSet { refreshIcon() } }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -14,9 +15,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         item.menu = menu
         panel.onLanguageChange = { [weak self] _ in self?.refreshIcon() }
 
-        // ⌘3 abre o painel; ⌃3 traduz o que está escrito no campo do WhatsApp, no lugar.
+        // ⌘3 abre o painel; ⌃3 traduz o que está escrito no campo do WhatsApp, no lugar; ⌥3 abre as outras ações.
         HotKeys.shared.register(keyCode: kVK_ANSI_3, modifiers: cmdKey) { [weak self] in self?.panel.toggle() }
         HotKeys.shared.register(keyCode: kVK_ANSI_3, modifiers: controlKey) { [weak self] in self?.translateInPlace() }
+        HotKeys.shared.register(keyCode: kVK_ANSI_3, modifiers: optionKey) { [weak self] in self?.showActions() }
 
         if KeyStore.apiKey == nil { DispatchQueue.main.async { self.askForKey(message: nil) } }
         if !Keyboard.trusted { Keyboard.askForAccess() }
@@ -29,37 +31,82 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         item.button?.title = ""
     }
 
-    // MARK: Tradução no lugar (⌃3)
+    // MARK: No campo do app (⌃3 traduz, ⌥3 abre as ações)
 
-    private func translateInPlace() {
-        guard !busy else { return }
-        guard Keyboard.trusted else { Keyboard.askForAccess(); return }
+    /// Seleciona tudo no campo do app da frente e copia; devolve o texto e o clipboard antigo pra restaurar depois.
+    @MainActor
+    private func captureField() async -> (text: String, snapshot: ClipboardSnapshot)? {
+        guard Keyboard.trusted else { Keyboard.askForAccess(); return nil }
         let pb = NSPasteboard.general
         let snapshot = ClipboardSnapshot()
         let before = pb.changeCount
-        let lang = language
+        Keyboard.selectAll()
+        try? await Task.sleep(nanoseconds: 60_000_000)
+        Keyboard.copy()
+        try? await Task.sleep(nanoseconds: 180_000_000)
+        guard pb.changeCount != before, let text = pb.string(forType: .string),
+              !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            snapshot.restore(); NSSound.beep(); return nil
+        }
+        return (text, snapshot)
+    }
 
+    /// Roda o pedido e troca o texto do campo pelo resultado.
+    @MainActor
+    private func replaceField(_ snapshot: ClipboardSnapshot, reselect: Bool,
+                              _ work: () async throws -> String) async {
+        busy = true
+        defer { busy = false }
+        do {
+            let result = try await work()
+            ClipboardSnapshot.set(result)
+            if reselect {
+                Keyboard.selectAll()
+                try? await Task.sleep(nanoseconds: 60_000_000)
+            }
+            Keyboard.paste()
+            try? await Task.sleep(nanoseconds: 400_000_000)
+            snapshot.restore()
+        } catch {
+            snapshot.restore()
+            if !(error is CancellationError) { notify(error.localizedDescription) }
+        }
+    }
+
+    private func translateInPlace() {
+        guard !busy else { return }
+        let lang = language
         Task { @MainActor in
-            Keyboard.selectAll()
-            try? await Task.sleep(nanoseconds: 60_000_000)
-            Keyboard.copy()
-            try? await Task.sleep(nanoseconds: 180_000_000)
-            guard pb.changeCount != before, let text = pb.string(forType: .string),
-                  !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-                snapshot.restore(); NSSound.beep(); return
+            guard let (text, snapshot) = await captureField() else { return }
+            await replaceField(snapshot, reselect: false) {
+                try await Translator.shared.translate(text, to: lang, direction: .outgoing)
             }
-            busy = true
-            defer { busy = false }
-            do {
-                let result = try await Translator.shared.translate(text, to: lang, direction: .outgoing)
-                ClipboardSnapshot.set(result)
-                Keyboard.paste()
-                try? await Task.sleep(nanoseconds: 400_000_000)
+        }
+    }
+
+    private func showActions() {
+        guard !busy, !picker.isVisible else { return }
+        let front = NSWorkspace.shared.frontmostApplication
+        let lang = language
+        Task { @MainActor in
+            guard let (text, snapshot) = await captureField() else { return }
+            picker.onCancel = {
                 snapshot.restore()
-            } catch {
-                snapshot.restore()
-                notify(error.localizedDescription)
+                front?.activate()
             }
+            picker.onPick = { [weak self] action in
+                front?.activate()
+                Task { @MainActor in
+                    // Espera o app voltar pra frente antes de colar.
+                    try? await Task.sleep(nanoseconds: 250_000_000)
+                    await self?.replaceField(snapshot, reselect: true) {
+                        action == .translate
+                            ? try await Translator.shared.translate(text, to: lang, direction: .outgoing)
+                            : try await Translator.shared.rewrite(text, action)
+                    }
+                }
+            }
+            picker.present(text: text, translateTo: lang)
         }
     }
 
@@ -89,6 +136,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         menu.addItem(.separator())
         add(menu, "Abrir tradutor  (⌘3)", #selector(openPanel))
         add(menu, "Traduzir campo do WhatsApp  (⌃3)", #selector(inPlaceFromMenu))
+        add(menu, "Corrigir, melhorar, humanizar…  (⌥3)", #selector(actionsFromMenu))
         menu.addItem(.separator())
         if !Keyboard.trusted { add(menu, "Permitir Acessibilidade (pra colar sozinho)…", #selector(askAccess)) }
         add(menu, KeyStore.apiKey == nil ? "Definir chave da OpenAI…" : "Trocar chave da OpenAI…", #selector(askForKeyFromMenu))
@@ -118,6 +166,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     @objc private func inPlaceFromMenu() {
         // Dá tempo do menu fechar e o foco voltar pro WhatsApp.
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { self.translateInPlace() }
+    }
+    @objc private func actionsFromMenu() {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { self.showActions() }
     }
     @objc private func askAccess() { Keyboard.askForAccess() }
     @objc private func clearCache() { Translator.shared.clearCache() }
